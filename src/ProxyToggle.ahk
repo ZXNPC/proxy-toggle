@@ -38,6 +38,7 @@ global StatusLabel := ""     ; 设置窗口中的状态提示
 global CaptureHook := ""     ; 快捷键监听 InputHook
 global Capturing := false    ; 是否正在监听快捷键
 global CaptureMods := Map()  ; 监听期间按下的修饰键 vk 集合
+global PreviewGui := ""      ; 设置窗口中的提示框预览
 
 ; ============================================================
 ; 入口
@@ -323,24 +324,57 @@ OpenSettingsGui(*) {
     g.AddCheckbox("x+8 vShowInd " . (ShowIndicator ? "Checked" : ""), "显示代理状态提示")
 
     g.AddText("xm", "提示透明度:")
-    g.AddEdit("x+8 w60 vTransp", Transparency)
+    g.AddEdit("x+8 w60 vTransp", Transparency).OnEvent("Change", UpdatePreview)
     g.AddText("x+16", "字号:")
-    g.AddEdit("x+8 w60 vFontSz", FontSize)
+    g.AddEdit("x+8 w60 vFontSz", FontSize).OnEvent("Change", UpdatePreview)
     g.AddText("x+16", "宽度:")
-    g.AddEdit("x+8 w60 vWinW", GuiWidth)
+    g.AddEdit("x+8 w60 vWinW", GuiWidth).OnEvent("Change", UpdatePreview)
     g.AddText("x+16", "高度:")
-    g.AddEdit("x+8 w60 vWinH", GuiHeight)
+    g.AddEdit("x+8 w60 vWinH", GuiHeight).OnEvent("Change", UpdatePreview)
 
     g.AddText("xm", "开机启动:")
     g.AddCheckbox("x+8 vAutoStart " . (AutoStart ? "Checked" : ""), "系统启动时自动运行")
 
     g.AddText("xm w400", "透明度 0-255，字号 8-48，宽度 100-800，高度 40-400，越界自动修正")
+    g.AddText("xm cGray", "▼ 下方为提示框实时预览（与右下角提示框样式一致）")
 
     g.AddButton("xm w120 Default", "保存并应用").OnEvent("Click", SaveSettings)
     g.AddButton("x+12 w90", "取消").OnEvent("Click", CloseSettingsGui)
 
     SettingsGui := g
     g.Show("w440")
+    UpdatePreview()   ; 显示初始预览
+}
+
+; 读取设置窗口当前输入，实时重建提示框预览（与实际提示框参数一致）
+UpdatePreview(*) {
+    global PreviewGui, SettingsGui
+    if (SettingsGui = "")
+        return
+    values := SettingsGui.Submit(false)
+    transp := Clamp(values.Transp, 0, 255)
+    fSize := Clamp(values.FontSz, 8, 48)
+    pWidth := Clamp(values.WinW, 100, 800)
+    pHeight := Clamp(values.WinH, 40, 400)
+
+    if (PreviewGui != "") {
+        try PreviewGui.Destroy()
+        PreviewGui := ""
+    }
+    PreviewGui := Gui()
+    PreviewGui.BackColor := "Black"
+    PreviewGui.SetFont("s" fSize " Bold", "Segoe UI, Microsoft YaHei, Segoe UI Emoji")
+    PreviewGui.AddText("cLime", "🔌 代理已打开")
+    PreviewGui.Opt("+AlwaysOnTop -Caption +ToolWindow +E0x20")
+
+    ; 定位到设置窗口正下方（放不下则放到上方）
+    SettingsGui.GetPos(&sx, &sy, &sw, &sh)
+    px := sx
+    py := sy + sh + 8
+    if (py + pHeight > A_ScreenHeight)
+        py := sy - pHeight - 8
+    PreviewGui.Show("x" px " y" py " w" pWidth " h" pHeight " NoActivate")
+    WinSetTransparent(transp, PreviewGui.Hwnd)
 }
 
 SaveSettings(*) {
@@ -397,8 +431,12 @@ SaveSettings(*) {
 }
 
 CloseSettingsGui(*) {
-    global SettingsGui
+    global SettingsGui, PreviewGui
     StopCapture()
+    if (PreviewGui != "") {
+        try PreviewGui.Destroy()
+        PreviewGui := ""
+    }
     if (SettingsGui != "") {
         try SettingsGui.Destroy()
         SettingsGui := ""
