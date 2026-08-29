@@ -45,10 +45,15 @@ jobs:
         run: |
           $base = Get-ChildItem (Split-Path $env:AHK2EXE) -Recurse -Filter 'AutoHotkey64.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $base) {
-            Write-Host 'Ahk2Exe 中未找到运行时，下载 AutoHotkey v2 ...'
+            Write-Host 'Ahk2Exe 中未找到运行时，从 GitHub 下载 AutoHotkey v2 ...'
+            # 注意: 官网 ahk-v2.zip 有 Cloudflare 人机验证，CI 无法通过，改从 GitHub release 获取
+            $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/AutoHotkey/AutoHotkey/releases/latest' -Headers @{ 'User-Agent' = 'proxy-toggle-build' }
+            $asset = $rel.assets | Where-Object { $_.name -match '\.zip$' -and $_.name -notmatch '_setup' } | Select-Object -First 1
+            if (-not $asset) { throw "AutoHotkey latest release ($($rel.tag_name)) 中未找到 zip 资产" }
+            Write-Host "AutoHotkey: tag=$($rel.tag_name) asset=$($asset.name)"
             $zip = Join-Path $env:RUNNER_TEMP 'ahk-v2.zip'
             $dir = Join-Path $env:RUNNER_TEMP 'AutoHotkey'
-            Invoke-WebRequest -Uri 'https://www.autohotkey.com/download/ahk-v2.zip' -OutFile $zip
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
             Expand-Archive -Path $zip -DestinationPath $dir
             $base = Get-ChildItem $dir -Recurse -Filter 'AutoHotkey64.exe' | Select-Object -First 1
           }
