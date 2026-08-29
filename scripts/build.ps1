@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     使用 Ahk2Exe (AutoHotkey v2 官方编译器) 将 src/ProxyToggle.ahk 编译为 .exe。
 
