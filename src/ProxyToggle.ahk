@@ -37,6 +37,7 @@ global HotkeyEdit := ""      ; 设置窗口中的快捷键输入框
 global StatusLabel := ""     ; 设置窗口中的状态提示
 global CaptureHook := ""     ; 快捷键监听 InputHook
 global Capturing := false    ; 是否正在监听快捷键
+global CaptureMods := Map()  ; 监听期间按下的修饰键 vk 集合
 
 ; ============================================================
 ; 入口
@@ -407,10 +408,11 @@ CloseSettingsGui(*) {
 ; ============================================================
 
 StartHotkeyCapture(*) {
-    global CaptureHook, Capturing, StatusLabel
+    global CaptureHook, Capturing, StatusLabel, CaptureMods
     if (Capturing)
         return
     Capturing := true
+    CaptureMods.Clear()
     ; 无结束键：Enter/Esc/Tab 等也可被捕获为快捷键（Esc 在回调中做"取消"处理）
     CaptureHook := InputHook("", "")
     ; 监听期间按键透传，不拦截用户输入
@@ -425,13 +427,36 @@ StartHotkeyCapture(*) {
     SetTimer(StopCaptureTimeout, -10000)
 }
 
+; 是否为修饰键（覆盖中性 VK 与左右 VK，如 LCtrl=0xA2 / RCtrl=0xA3）
+IsModifierVk(vk) {
+    return (vk = 0x10 or vk = 0x11 or vk = 0x12 or vk = 0x5B or vk = 0x5C
+        or vk = 0xA0 or vk = 0xA1 or vk = 0xA2 or vk = 0xA3 or vk = 0xA4 or vk = 0xA5)
+}
+
+; 根据已按下的修饰键集合构建 AHK 前缀（^=Ctrl !=Alt +=Shift #=Win）
+ModsToPrefix() {
+    global CaptureMods
+    prefix := ""
+    if (CaptureMods.Has(0x11) or CaptureMods.Has(0xA2) or CaptureMods.Has(0xA3))
+        prefix .= "^"
+    if (CaptureMods.Has(0x12) or CaptureMods.Has(0xA4) or CaptureMods.Has(0xA5))
+        prefix .= "!"
+    if (CaptureMods.Has(0x10) or CaptureMods.Has(0xA0) or CaptureMods.Has(0xA1))
+        prefix .= "+"
+    if (CaptureMods.Has(0x5B) or CaptureMods.Has(0x5C))
+        prefix .= "#"
+    return prefix
+}
+
 CaptureKeyDown(ih, vk, sc) {
-    global Capturing, HotkeyEdit, StatusLabel
+    global Capturing, CaptureMods, HotkeyEdit, StatusLabel
     if (!Capturing)
         return
-    ; 忽略单独按下的修饰键（Shift/Ctrl/Alt/Win）
-    if (vk = 0x10 or vk = 0x11 or vk = 0x12 or vk = 0x5B or vk = 0x5C)
+    ; 修饰键：记录状态后继续监听，等待主键（支持 Ctrl+Alt+P 等组合键）
+    if (IsModifierVk(vk)) {
+        CaptureMods[vk] := true
         return
+    }
     ; 注意: "vkXX scYYY"（带空格）是无效格式，须写作 "vkXXscYYY"
     keyName := GetKeyName(Format("vk{:02X}sc{:03X}", vk, sc))
     if (keyName = "")
@@ -440,16 +465,7 @@ CaptureKeyDown(ih, vk, sc) {
         StopCapture()   ; 按 Esc 取消监听
         return
     }
-    mods := ""
-    if (GetKeyState("Ctrl"))
-        mods .= "^"
-    if (GetKeyState("Alt"))
-        mods .= "!"
-    if (GetKeyState("Shift"))
-        mods .= "+"
-    if (GetKeyState("LWin") or GetKeyState("RWin"))
-        mods .= "#"
-    combo := mods . keyName
+    combo := ModsToPrefix() . keyName
     if (HotkeyEdit != "")
         HotkeyEdit.Text := combo
     if (StatusLabel != "")
@@ -458,10 +474,11 @@ CaptureKeyDown(ih, vk, sc) {
 }
 
 StopCapture() {
-    global CaptureHook, Capturing, StatusLabel
+    global CaptureHook, Capturing, StatusLabel, CaptureMods
     if (!Capturing)
         return
     Capturing := false
+    CaptureMods.Clear()
     try CaptureHook.Stop()
     SetTimer(StopCaptureTimeout, 0)
     if (StatusLabel != "")
