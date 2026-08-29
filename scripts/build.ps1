@@ -78,9 +78,12 @@ Write-Host "Ahk2Exe : $Ahk2Exe"
 Write-Host "Base    : $($base.FullName)"
 Write-Host "Compile : $in"
 Write-Host "Output  : $Out"
-# Ahk2Exe 是 GUI 程序：PowerShell 的 & 调用不会等待其退出，必须用 Start-Process -Wait
-$p = Start-Process -FilePath $Ahk2Exe -ArgumentList $ahkArgs -Wait -PassThru -WindowStyle Hidden
-if ($p.ExitCode -ne 0) { throw "编译失败，Ahk2Exe 退出码: $($p.ExitCode)" }
+# 用 cmd /c 调用并手动加引号：Ahk2Exe 是 GUI 程序(PowerShell 的 & 不等待其退出)，
+# 且路径可能含空格(如 C:\Program Files\...)，参数必须显式加引号
+$cmdLine = '"{0}" /in "{1}" /out "{2}" /base "{3}" /compress 0 /silent' -f $Ahk2Exe, $in, $Out, $base.FullName
+if ($Icon) { $cmdLine += ' /icon "{0}"' -f (Resolve-Path $Icon) }
+cmd.exe /d /c $cmdLine
+if ($LASTEXITCODE -ne 0) { throw "编译失败，Ahk2Exe 退出码: $LASTEXITCODE" }
 if (-not (Test-Path $Out)) { throw "编译产物不存在: $Out" }
 
 $size = (Get-Item $Out).Length / 1KB

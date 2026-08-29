@@ -22,37 +22,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Download Ahk2Exe (AutoHotkey v2 compiler)
+      - name: Download Ahk2Exe (AutoHotkey compiler)
         shell: pwsh
         run: |
           $zip = Join-Path $env:RUNNER_TEMP 'Ahk2Exe.zip'
           $dir = Join-Path $env:RUNNER_TEMP 'Ahk2Exe'
-          $downloaded = $false
-          # 通过 GitHub API 获取 latest release 的真实 zip 资产名（资产名不固定，勿硬编码）
-          try {
-            $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/AutoHotkey/Ahk2Exe/releases/latest' -Headers @{ 'User-Agent' = 'proxy-toggle-build' }
-            $asset = $rel.assets | Where-Object { $_.name -match '\.zip$' } | Select-Object -First 1
-            if ($asset) {
-              Write-Host "通过 API 获取资产: $($asset.name)"
-              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
-              $downloaded = $true
-            }
-          } catch {
-            Write-Host "API 获取失败: $($_.Exception.Message)"
-          }
-          # 回退：常见资产名逐个尝试
-          if (-not $downloaded) {
-            foreach ($name in @('Ahk2Exe.zip', 'Ahk2Exe_x64.zip')) {
-              $u = "https://github.com/AutoHotkey/Ahk2Exe/releases/latest/download/$name"
-              try {
-                Invoke-WebRequest -Uri $u -OutFile $zip -ErrorAction Stop
-                Write-Host "固定名下载成功: $name"
-                $downloaded = $true
-                break
-              } catch { }
-            }
-          }
-          if (-not $downloaded) { throw '无法下载 Ahk2Exe（API 与固定名均失败）' }
+          # 注意: 最新版 Ahk2Exe(1.1.37) 已支持编译 v1.1 和 v2+ 脚本；
+          # 资产名不固定(如 Ahk2Exe1.1.37.02a2.zip)，通过 API 动态获取
+          $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/AutoHotkey/Ahk2Exe/releases/latest' -Headers @{ 'User-Agent' = 'proxy-toggle-build' }
+          $asset = $rel.assets | Where-Object { $_.name -match '\.zip$' } | Select-Object -First 1
+          if (-not $asset) { throw "latest release ($($rel.tag_name)) 中未找到 zip 资产" }
+          Write-Host "Ahk2Exe: tag=$($rel.tag_name) asset=$($asset.name)"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
           Expand-Archive -Path $zip -DestinationPath $dir
           $exe = Get-ChildItem $dir -Recurse -Filter 'Ahk2Exe.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $exe) { throw '未找到 Ahk2Exe.exe' }
@@ -88,19 +69,17 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force 'dist' | Out-Null
-          $ahkArgs = @(
-            '/in', (Join-Path $env:GITHUB_WORKSPACE 'src\ProxyToggle.ahk'),
-            '/out', (Join-Path $env:GITHUB_WORKSPACE "dist\ProxyToggle-$env:APP_VERSION.exe"),
-            '/base', $env:AHK_BASE,
-            '/compress', '0',
-            '/silent'
-          )
+          # 用 cmd /c 调用并手动加引号：Ahk2Exe 是 GUI 程序(PowerShell 的 & 不等待)，
+          # 且路径可能含空格(如 C:\Program Files)，参数必须显式加引号
+          $cmdLine = '"{0}" /in "{1}" /out "{2}" /base "{3}" /compress 0 /silent' -f `
+            $env:AHK2EXE, `
+            (Join-Path $env:GITHUB_WORKSPACE 'src\ProxyToggle.ahk'), `
+            (Join-Path $env:GITHUB_WORKSPACE "dist\ProxyToggle-$env:APP_VERSION.exe"), `
+            $env:AHK_BASE
           $icon = Join-Path $env:GITHUB_WORKSPACE 'assets\app.ico'
-          if (Test-Path $icon) { $ahkArgs += @('/icon', $icon) }
-          # Ahk2Exe 是 GUI 程序：PowerShell 的 & 调用不会等待其退出，
-          # 必须用 Start-Process -Wait 等编译真正完成后才继续
-          $p = Start-Process -FilePath $env:AHK2EXE -ArgumentList $ahkArgs -Wait -PassThru -WindowStyle Hidden
-          if ($p.ExitCode -ne 0) { throw "Ahk2Exe 编译失败，退出码 $($p.ExitCode)" }
+          if (Test-Path $icon) { $cmdLine += ' /icon "' + $icon + '"' }
+          cmd.exe /d /c $cmdLine
+          if ($LASTEXITCODE -ne 0) { throw "Ahk2Exe 编译失败，退出码 $LASTEXITCODE" }
           $outFile = Join-Path $env:GITHUB_WORKSPACE "dist\ProxyToggle-$env:APP_VERSION.exe"
           if (-not (Test-Path $outFile)) { throw "编译产物不存在: $outFile" }
           Get-Item $outFile | Select-Object Name, Length
