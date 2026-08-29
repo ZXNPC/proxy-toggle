@@ -20,14 +20,17 @@ global AppVersion := "1.0.0"
 
 ; ---------------- 默认配置（首次运行写入 config.ini） ----------------
 global cfgPath := A_ScriptDir "\config.ini"
-global ProxyAddr := "192.168.31.110:7890"   ; 代理地址（支持 "host:port" 或 "socks=host:port"）
-global HotkeyCombo := "^!p"                  ; 快捷键（^=Ctrl  !=Alt  +=Shift  #=Win）
-global ShowIndicator := true                 ; 是否显示提示
-global Transparency := 180                   ; 透明度 0~255
-global FontSize := 16                        ; 提示字号
-global GuiWidth := 200                       ; 提示窗口宽度
-global GuiHeight := 60                       ; 提示窗口高度
-global AutoStart := false                    ; 是否开机启动
+global DefaultProxy := "127.0.0.1:7890"    ; 默认代理地址（支持 "host:port" 或 "socks=host:port"）
+global DefaultHotkey := "^!p"               ; 默认快捷键（^=Ctrl  !=Alt  +=Shift  #=Win）
+global DefaultTransparency := 180           ; 默认透明度 0~255
+global DefaultFontSize := 16                ; 默认提示字号
+
+global ProxyAddr := DefaultProxy
+global HotkeyCombo := DefaultHotkey
+global ShowIndicator := true                ; 是否显示提示
+global Transparency := DefaultTransparency
+global FontSize := DefaultFontSize
+global AutoStart := false                   ; 是否开机启动
 
 ; ---------------- 运行时状态 ----------------
 global ProxyGui := ""        ; 指示器窗口对象
@@ -38,7 +41,8 @@ global StatusLabel := ""     ; 设置窗口中的状态提示
 global CaptureHook := ""     ; 快捷键监听 InputHook
 global Capturing := false    ; 是否正在监听快捷键
 global CaptureMods := Map()  ; 监听期间按下的修饰键 vk 集合
-global PreviewGui := ""      ; 设置窗口中的提示框预览
+global PreviewBox := ""      ; 设置窗口内的提示框预览控件
+global PreviewInfo := ""     ; 预览参数说明文字控件
 
 ; ============================================================
 ; 入口
@@ -69,19 +73,17 @@ Persistent
 ; ============================================================
 
 LoadConfig() {
-    global ProxyAddr, HotkeyCombo, ShowIndicator, Transparency, FontSize, GuiWidth, GuiHeight, AutoStart
+    global ProxyAddr, HotkeyCombo, ShowIndicator, Transparency, FontSize, AutoStart
     if not FileExist(cfgPath) {
         SaveConfig()   ; 生成默认配置
         return
     }
     NormalizeIniBom()  ; 修复被外部编辑器写成 "UTF-8 带 BOM" 的配置（会导致首个小节读不到）
-    ProxyAddr := IniRead(cfgPath, "General", "ProxyAddr", "192.168.31.110:7890")
-    HotkeyCombo := IniRead(cfgPath, "General", "Hotkey", "^!p")
+    ProxyAddr := IniRead(cfgPath, "General", "ProxyAddr", DefaultProxy)
+    HotkeyCombo := IniRead(cfgPath, "General", "Hotkey", DefaultHotkey)
     ShowIndicator := (IniRead(cfgPath, "Indicator", "Show", "1") = "1")
     Transparency := Clamp(IniRead(cfgPath, "Indicator", "Transparency", "180"), 0, 255)
     FontSize := Clamp(IniRead(cfgPath, "Indicator", "FontSize", "16"), 8, 48)
-    GuiWidth := Clamp(IniRead(cfgPath, "Indicator", "Width", "200"), 100, 800)
-    GuiHeight := Clamp(IniRead(cfgPath, "Indicator", "Height", "60"), 40, 400)
     AutoStart := (IniRead(cfgPath, "Startup", "AutoStart", "0") = "1")
 }
 
@@ -91,9 +93,12 @@ SaveConfig() {
     IniWrite(ShowIndicator ? 1 : 0, cfgPath, "Indicator", "Show")
     IniWrite(Transparency, cfgPath, "Indicator", "Transparency")
     IniWrite(FontSize, cfgPath, "Indicator", "FontSize")
-    IniWrite(GuiWidth, cfgPath, "Indicator", "Width")
-    IniWrite(GuiHeight, cfgPath, "Indicator", "Height")
     IniWrite(AutoStart ? 1 : 0, cfgPath, "Startup", "AutoStart")
+}
+
+; 提示框尺寸随字号自动计算（宽 = 字号×10+40，高 = 字号×3+12；字号16 -> 200×60）
+IndicatorSize(fSize) {
+    return Map("w", fSize * 10 + 40, "h", fSize * 3 + 12)
 }
 
 ; AHK 的 IniRead 无法正确解析"UTF-8 带 BOM"文件的第一小节（BOM 字符混入节名，导致读不到）。
@@ -221,6 +226,30 @@ ReadableHotkey(combo) {
     return s
 }
 
+; 将可读快捷键（如 "Ctrl+Alt+P"）转换为 AHK 语法（如 "^!P"）。
+; 文本不含 Ctrl/Alt/Shift/Win 关键字时原样返回，兼容直接输入 AHK 语法（如 "^!p"）。
+ReadableToAhk(text) {
+    parts := StrSplit(text, "+")
+    mods := ""
+    key := ""
+    for p in parts {
+        t := Trim(p)
+        if (t = "Ctrl")
+            mods .= "^"
+        else if (t = "Alt")
+            mods .= "!"
+        else if (t = "Shift")
+            mods .= "+"
+        else if (t = "Win")
+            mods .= "#"
+        else if (t != "")
+            key := t
+    }
+    if (key = "")
+        return ""
+    return mods . key
+}
+
 ; ============================================================
 ; 核心切换
 ; ============================================================
@@ -273,9 +302,10 @@ ShowProxyIndicator(Show) {
         ProxyGui.AddText("cLime", "🔌 代理已打开")
         ProxyGui.Opt("+AlwaysOnTop -Caption +ToolWindow +E0x20")
 
-        x := A_ScreenWidth - GuiWidth - 20
-        y := A_ScreenHeight - GuiHeight - 20
-        ProxyGui.Show("x" x " y" y " w" GuiWidth " h" GuiHeight " NoActivate")
+        sz := IndicatorSize(FontSize)
+        x := A_ScreenWidth - sz["w"] - 20
+        y := A_ScreenHeight - sz["h"] - 20
+        ProxyGui.Show("x" x " y" y " w" sz["w"] " h" sz["h"] " NoActivate")
 
         WinSetTransparent(Transparency, ProxyGui.Hwnd)
     } else {
@@ -304,7 +334,7 @@ CheckAndShowStatus() {
 ; ============================================================
 
 OpenSettingsGui(*) {
-    global SettingsGui, HotkeyEdit, StatusLabel
+    global SettingsGui, HotkeyEdit, StatusLabel, PreviewBox, PreviewInfo, TranspVal, FontSzVal
     if (SettingsGui != "") {
         try SettingsGui.Show()
         return
@@ -316,29 +346,30 @@ OpenSettingsGui(*) {
     g.AddEdit("x+8 w280 vProxyAddr", ProxyAddr)
 
     g.AddText("xm", "快捷键:")
-    HotkeyEdit := g.AddEdit("x+8 w180 vHotkey", HotkeyCombo)
+    HotkeyEdit := g.AddEdit("x+8 w180 vHotkey", ReadableHotkey(HotkeyCombo))
     g.AddButton("x+8 w80", "监听...").OnEvent("Click", StartHotkeyCapture)
-    StatusLabel := g.AddText("xm w400", "提示：点击“监听...”后按下新的快捷键组合")
+    StatusLabel := g.AddText("xm w400", "提示：点击“监听...”后按下新的快捷键组合（如 Ctrl+Alt+P）")
 
     g.AddText("xm", "显示提示:")
     g.AddCheckbox("x+8 vShowInd " . (ShowIndicator ? "Checked" : ""), "显示代理状态提示")
 
     g.AddText("xm", "提示透明度:")
-    g.AddEdit("x+8 w60 vTransp", Transparency).OnEvent("Change", UpdatePreview)
-    g.AddText("x+16", "字号:")
-    g.AddEdit("x+8 w60 vFontSz", FontSize).OnEvent("Change", UpdatePreview)
-    g.AddText("x+16", "宽度:")
-    g.AddEdit("x+8 w60 vWinW", GuiWidth).OnEvent("Change", UpdatePreview)
-    g.AddText("x+16", "高度:")
-    g.AddEdit("x+8 w60 vWinH", GuiHeight).OnEvent("Change", UpdatePreview)
+    g.AddSlider("x+8 w200 Range0-255 ToolTip vTransp", Transparency).OnEvent("Change", UpdatePreview)
+    TranspVal := g.AddText("x+8 w40", Transparency)
+
+    g.AddText("xm", "提示字号:")
+    g.AddSlider("x+8 w200 Range8-48 ToolTip vFontSz", FontSize).OnEvent("Change", UpdatePreview)
+    FontSzVal := g.AddText("x+8 w40", FontSize)
 
     g.AddText("xm", "开机启动:")
     g.AddCheckbox("x+8 vAutoStart " . (AutoStart ? "Checked" : ""), "系统启动时自动运行")
 
-    g.AddText("xm w400", "透明度 0-255，字号 8-48，宽度 100-800，高度 40-400，越界自动修正")
-    g.AddText("xm cGray", "▼ 下方为提示框实时预览（与右下角提示框样式一致）")
+    g.AddText("xm", "提示框预览：")
+    PreviewBox := g.AddEdit("xm w380 h100 BackgroundBlack cLime Center ReadOnly -Border", "🔌 代理已打开")
+    PreviewInfo := g.AddText("xm w400 cGray", "")
 
     g.AddButton("xm w120 Default", "保存并应用").OnEvent("Click", SaveSettings)
+    g.AddButton("x+12 w100", "还原默认").OnEvent("Click", ResetToDefaults)
     g.AddButton("x+12 w90", "取消").OnEvent("Click", CloseSettingsGui)
 
     SettingsGui := g
@@ -346,39 +377,47 @@ OpenSettingsGui(*) {
     UpdatePreview()   ; 显示初始预览
 }
 
-; 读取设置窗口当前输入，实时重建提示框预览（与实际提示框参数一致）
+; 读取设置窗口当前输入，实时刷新窗口内的提示框预览
 UpdatePreview(*) {
-    global PreviewGui, SettingsGui
+    global SettingsGui, PreviewBox, PreviewInfo, TranspVal, FontSzVal
     if (SettingsGui = "")
         return
     values := SettingsGui.Submit(false)
     transp := Clamp(values.Transp, 0, 255)
     fSize := Clamp(values.FontSz, 8, 48)
-    pWidth := Clamp(values.WinW, 100, 800)
-    pHeight := Clamp(values.WinH, 40, 400)
+    sz := IndicatorSize(fSize)
+    pWidth := Min(sz["w"], 380)
+    pHeight := Min(sz["h"], 100)
 
-    if (PreviewGui != "") {
-        try PreviewGui.Destroy()
-        PreviewGui := ""
-    }
-    PreviewGui := Gui()
-    PreviewGui.BackColor := "Black"
-    PreviewGui.SetFont("s" fSize " Bold", "Segoe UI, Microsoft YaHei, Segoe UI Emoji")
-    PreviewGui.AddText("cLime", "🔌 代理已打开")
-    PreviewGui.Opt("+AlwaysOnTop -Caption +ToolWindow +E0x20")
+    PreviewBox.SetFont("s" fSize " Bold", "Segoe UI, Microsoft YaHei, Segoe UI Emoji")
+    PreviewBox.Move(, , pWidth, pHeight)
+    if (PreviewInfo != "")
+        PreviewInfo.Text := "透明度 " transp " · 尺寸 " sz["w"] "×" sz["h"] "（尺寸由字号自动计算，实际提示框为半透明）"
+    if (TranspVal != "")
+        TranspVal.Text := transp
+    if (FontSzVal != "")
+        FontSzVal.Text := fSize
+}
 
-    ; 定位到设置窗口正下方（放不下则放到上方）
-    SettingsGui.GetPos(&sx, &sy, &sw, &sh)
-    px := sx
-    py := sy + sh + 8
-    if (py + pHeight > A_ScreenHeight)
-        py := sy - pHeight - 8
-    PreviewGui.Show("x" px " y" py " w" pWidth " h" pHeight " NoActivate")
-    WinSetTransparent(transp, PreviewGui.Hwnd)
+; 一键还原为默认设置（仅重置表单，需再点"保存并应用"）
+ResetToDefaults(*) {
+    global SettingsGui, StatusLabel
+    if (SettingsGui = "")
+        return
+    g := SettingsGui
+    g["ProxyAddr"].Text := DefaultProxy
+    g["Hotkey"].Text := ReadableHotkey(DefaultHotkey)
+    g["ShowInd"].Value := 1
+    g["Transp"].Value := DefaultTransparency
+    g["FontSz"].Value := DefaultFontSize
+    g["AutoStart"].Value := 0
+    UpdatePreview()
+    if (StatusLabel != "")
+        StatusLabel.Text := "已还原为默认设置，点击“保存并应用”生效"
 }
 
 SaveSettings(*) {
-    global SettingsGui, ProxyAddr, HotkeyCombo, ShowIndicator, Transparency, FontSize, GuiWidth, GuiHeight, AutoStart
+    global SettingsGui, ProxyAddr, HotkeyCombo, ShowIndicator, Transparency, FontSize, AutoStart
     g := SettingsGui
     values := g.Submit(false)
 
@@ -387,9 +426,9 @@ SaveSettings(*) {
         MsgBox("代理地址不能为空。", AppName, "Icon!")
         return
     }
-    newHotkey := Trim(values.Hotkey)
+    newHotkey := ReadableToAhk(Trim(values.Hotkey))
     if (newHotkey = "") {
-        MsgBox("快捷键不能为空。", AppName, "Icon!")
+        MsgBox("快捷键无效或格式错误：" Trim(values.Hotkey) "`n`n请使用 Ctrl+Alt+P 这样的格式，或点击“监听...”自动捕获。", AppName, "Icon!")
         return
     }
     ; 校验快捷键格式（先注册再注销，失败则报错并保留原设置）
@@ -398,7 +437,7 @@ SaveSettings(*) {
         Hotkey(newHotkey, ToggleProxy, "On")
         Hotkey(newHotkey, "Off")
     } catch {
-        MsgBox("快捷键无效或格式错误：" newHotkey "`n`n请使用 AHK 语法，例如 ^!p 表示 Ctrl+Alt+P。", AppName, "Icon!")
+        MsgBox("快捷键无效或格式错误：" Trim(values.Hotkey) "`n`n请使用 Ctrl+Alt+P 这样的格式，或点击“监听...”自动捕获。", AppName, "Icon!")
         return
     }
 
@@ -407,8 +446,6 @@ SaveSettings(*) {
     ShowIndicator := (values.ShowInd = 1)
     Transparency := Clamp(values.Transp, 0, 255)
     FontSize := Clamp(values.FontSz, 8, 48)
-    GuiWidth := Clamp(values.WinW, 100, 800)
-    GuiHeight := Clamp(values.WinH, 40, 400)
     AutoStart := (values.AutoStart = 1)
 
     SaveConfig()
@@ -431,12 +468,8 @@ SaveSettings(*) {
 }
 
 CloseSettingsGui(*) {
-    global SettingsGui, PreviewGui
+    global SettingsGui
     StopCapture()
-    if (PreviewGui != "") {
-        try PreviewGui.Destroy()
-        PreviewGui := ""
-    }
     if (SettingsGui != "") {
         try SettingsGui.Destroy()
         SettingsGui := ""
@@ -507,9 +540,9 @@ CaptureKeyDown(ih, vk, sc) {
     }
     combo := ModsToPrefix() . keyName
     if (HotkeyEdit != "")
-        HotkeyEdit.Text := combo
+        HotkeyEdit.Text := ReadableHotkey(combo)
     if (StatusLabel != "")
-        StatusLabel.Text := "已捕获: " combo " — 点击“保存并应用”生效"
+        StatusLabel.Text := "已捕获: " ReadableHotkey(combo) " — 点击“保存并应用”生效"
     StopCapture()
 }
 
