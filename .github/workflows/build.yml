@@ -27,7 +27,32 @@ jobs:
         run: |
           $zip = Join-Path $env:RUNNER_TEMP 'Ahk2Exe.zip'
           $dir = Join-Path $env:RUNNER_TEMP 'Ahk2Exe'
-          Invoke-WebRequest -Uri 'https://github.com/AutoHotkey/Ahk2Exe/releases/latest/download/Ahk2Exe.zip' -OutFile $zip
+          $downloaded = $false
+          # 通过 GitHub API 获取 latest release 的真实 zip 资产名（资产名不固定，勿硬编码）
+          try {
+            $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/AutoHotkey/Ahk2Exe/releases/latest' -Headers @{ 'User-Agent' = 'proxy-toggle-build' }
+            $asset = $rel.assets | Where-Object { $_.name -match '\.zip$' } | Select-Object -First 1
+            if ($asset) {
+              Write-Host "通过 API 获取资产: $($asset.name)"
+              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
+              $downloaded = $true
+            }
+          } catch {
+            Write-Host "API 获取失败: $($_.Exception.Message)"
+          }
+          # 回退：常见资产名逐个尝试
+          if (-not $downloaded) {
+            foreach ($name in @('Ahk2Exe.zip', 'Ahk2Exe_x64.zip')) {
+              $u = "https://github.com/AutoHotkey/Ahk2Exe/releases/latest/download/$name"
+              try {
+                Invoke-WebRequest -Uri $u -OutFile $zip -ErrorAction Stop
+                Write-Host "固定名下载成功: $name"
+                $downloaded = $true
+                break
+              } catch { }
+            }
+          }
+          if (-not $downloaded) { throw '无法下载 Ahk2Exe（API 与固定名均失败）' }
           Expand-Archive -Path $zip -DestinationPath $dir
           $exe = Get-ChildItem $dir -Recurse -Filter 'Ahk2Exe.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $exe) { throw '未找到 Ahk2Exe.exe' }
