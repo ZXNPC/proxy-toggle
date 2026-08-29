@@ -152,13 +152,14 @@ ApplySettings() {
     if (ToggleHotkey != "" and ToggleHotkey != HotkeyCombo)
         try Hotkey(ToggleHotkey, "Off")
     ; 注册新热键（非法则回退默认）
+    ; 注意: 必须显式传 "On" 选项 —— 热键一旦被 "Off" 过，仅传回调重新注册不会启用它
     if (HotkeyCombo != "") {
         try {
-            Hotkey(HotkeyCombo, ToggleProxy)
+            Hotkey(HotkeyCombo, ToggleProxy, "On")
         } catch {
             TrayTip(AppName, "快捷键 " HotkeyCombo " 无效，已恢复默认 ^!p", "Iconi")
             HotkeyCombo := "^!p"
-            try Hotkey(HotkeyCombo, ToggleProxy)
+            try Hotkey(HotkeyCombo, ToggleProxy, "On")
             SaveConfig()
         }
         ToggleHotkey := HotkeyCombo
@@ -358,8 +359,9 @@ SaveSettings(*) {
         return
     }
     ; 校验快捷键格式（先注册再注销，失败则报错并保留原设置）
+    ; 随后 ApplySettings 会用 "On" 显式重新启用，因此这里 Off 掉不影响最终结果
     try {
-        Hotkey(newHotkey, ToggleProxy)
+        Hotkey(newHotkey, ToggleProxy, "On")
         Hotkey(newHotkey, "Off")
     } catch {
         MsgBox("快捷键无效或格式错误：" newHotkey "`n`n请使用 AHK 语法，例如 ^!p 表示 Ctrl+Alt+P。", AppName, "Icon!")
