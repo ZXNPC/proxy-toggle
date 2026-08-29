@@ -411,8 +411,13 @@ StartHotkeyCapture(*) {
     if (Capturing)
         return
     Capturing := true
-    CaptureHook := InputHook()
-    CaptureHook.KeyOpt("{All}", "K")
+    ; 无结束键：Enter/Esc/Tab 等也可被捕获为快捷键（Esc 在回调中做"取消"处理）
+    CaptureHook := InputHook("", "")
+    ; 监听期间按键透传，不拦截用户输入
+    CaptureHook.VisibleText := true
+    CaptureHook.VisibleNonText := true
+    ; N = Notify：对所有按键启用 OnKeyDown/OnKeyUp 通知（KeyOpt 合法选项为 E/I/N/S/V）
+    CaptureHook.KeyOpt("{All}", "N")
     CaptureHook.OnKeyDown := CaptureKeyDown
     CaptureHook.Start()
     if (StatusLabel != "")
@@ -427,9 +432,12 @@ CaptureKeyDown(ih, vk, sc) {
     ; 忽略单独按下的修饰键（Shift/Ctrl/Alt/Win）
     if (vk = 0x10 or vk = 0x11 or vk = 0x12 or vk = 0x5B or vk = 0x5C)
         return
-    keyName := GetKeyName(Format("vk{:02X} sc{:03X}", vk, sc))
-    if (keyName = "Esc") {
-        StopCapture()
+    ; 注意: "vkXX scYYY"（带空格）是无效格式，须写作 "vkXXscYYY"
+    keyName := GetKeyName(Format("vk{:02X}sc{:03X}", vk, sc))
+    if (keyName = "")
+        return
+    if (keyName = "Esc" or keyName = "Escape") {
+        StopCapture()   ; 按 Esc 取消监听
         return
     }
     mods := ""
