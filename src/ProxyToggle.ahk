@@ -41,8 +41,8 @@ global StatusLabel := ""     ; 设置窗口中的状态提示
 global CaptureHook := ""     ; 快捷键监听 InputHook
 global Capturing := false    ; 是否正在监听快捷键
 global CaptureMods := Map()  ; 监听期间按下的修饰键 vk 集合
-global PreviewBox := ""      ; 设置窗口内的提示框预览控件
-global PreviewInfo := ""     ; 预览参数说明文字控件
+global TranspVal := ""       ; 设置窗口中透明度滑块数值显示
+global FontSzVal := ""       ; 设置窗口中字号滑块数值显示
 
 ; ============================================================
 ; 入口
@@ -334,7 +334,7 @@ CheckAndShowStatus() {
 ; ============================================================
 
 OpenSettingsGui(*) {
-    global SettingsGui, HotkeyEdit, StatusLabel, PreviewBox, PreviewInfo, TranspVal, FontSzVal
+    global SettingsGui, HotkeyEdit, StatusLabel, TranspVal, FontSzVal
     if (SettingsGui != "") {
         try SettingsGui.Show()
         return
@@ -354,19 +354,15 @@ OpenSettingsGui(*) {
     g.AddCheckbox("x+8 vShowInd " . (ShowIndicator ? "Checked" : ""), "显示代理状态提示")
 
     g.AddText("xm", "提示透明度:")
-    g.AddSlider("x+8 w200 Range0-255 ToolTip vTransp", Transparency).OnEvent("Change", UpdatePreview)
+    g.AddSlider("x+8 w200 Range0-255 ToolTip vTransp", Transparency).OnEvent("Change", UpdateSliderValues)
     TranspVal := g.AddText("x+8 w40", Transparency)
 
     g.AddText("xm", "提示字号:")
-    g.AddSlider("x+8 w200 Range8-48 ToolTip vFontSz", FontSize).OnEvent("Change", UpdatePreview)
+    g.AddSlider("x+8 w200 Range8-48 ToolTip vFontSz", FontSize).OnEvent("Change", UpdateSliderValues)
     FontSzVal := g.AddText("x+8 w40", FontSize)
 
     g.AddText("xm", "开机启动:")
     g.AddCheckbox("x+8 vAutoStart " . (AutoStart ? "Checked" : ""), "系统启动时自动运行")
-
-    g.AddText("xm", "提示框预览：")
-    PreviewBox := g.AddEdit("xm w380 h100 BackgroundBlack cLime Center ReadOnly -Border", "🔌 代理已打开")
-    PreviewInfo := g.AddText("xm w400 cGray", "")
 
     g.AddButton("xm w120 Default", "保存并应用").OnEvent("Click", SaveSettings)
     g.AddButton("x+12 w100", "还原默认").OnEvent("Click", ResetToDefaults)
@@ -374,29 +370,18 @@ OpenSettingsGui(*) {
 
     SettingsGui := g
     g.Show("w440")
-    UpdatePreview()   ; 显示初始预览
 }
 
-; 读取设置窗口当前输入，实时刷新窗口内的提示框预览
-UpdatePreview(*) {
-    global SettingsGui, PreviewBox, PreviewInfo, TranspVal, FontSzVal
+; 滑块变化时更新其旁的数值显示
+UpdateSliderValues(*) {
+    global SettingsGui, TranspVal, FontSzVal
     if (SettingsGui = "")
         return
     values := SettingsGui.Submit(false)
-    transp := Clamp(values.Transp, 0, 255)
-    fSize := Clamp(values.FontSz, 8, 48)
-    sz := IndicatorSize(fSize)
-    pWidth := Min(sz["w"], 380)
-    pHeight := Min(sz["h"], 100)
-
-    PreviewBox.SetFont("s" fSize " Bold", "Segoe UI, Microsoft YaHei, Segoe UI Emoji")
-    PreviewBox.Move(, , pWidth, pHeight)
-    if (PreviewInfo != "")
-        PreviewInfo.Text := "透明度 " transp " · 尺寸 " sz["w"] "×" sz["h"] "（尺寸由字号自动计算，实际提示框为半透明）"
     if (TranspVal != "")
-        TranspVal.Text := transp
+        TranspVal.Text := Clamp(values.Transp, 0, 255)
     if (FontSzVal != "")
-        FontSzVal.Text := fSize
+        FontSzVal.Text := Clamp(values.FontSz, 8, 48)
 }
 
 ; 一键还原为默认设置（仅重置表单，需再点"保存并应用"）
@@ -411,7 +396,7 @@ ResetToDefaults(*) {
     g["Transp"].Value := DefaultTransparency
     g["FontSz"].Value := DefaultFontSize
     g["AutoStart"].Value := 0
-    UpdatePreview()
+    UpdateSliderValues()
     if (StatusLabel != "")
         StatusLabel.Text := "已还原为默认设置，点击“保存并应用”生效"
 }
